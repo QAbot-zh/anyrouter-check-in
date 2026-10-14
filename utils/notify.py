@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 import httpx
 
+from utils.checkin_report import CheckinReport
+
 
 class NotificationKit:
 	def __init__(self):
@@ -96,7 +98,7 @@ class NotificationKit:
 		data = {'msgtype': 'text', 'text': {'content': f'{title}\n{content}'}}
 		self._post_json('DingTalk', self.dingding_webhook, data)
 
-	def send_feishu(self, title: str, content: str):
+	def send_feishu(self, title: str, content: str, report: CheckinReport | None = None):
 		if not self.feishu_webhook:
 			raise ValueError('Feishu Webhook not configured')
 
@@ -107,6 +109,8 @@ class NotificationKit:
 				'header': {'template': 'blue', 'title': {'content': title, 'tag': 'plain_text'}},
 			},
 		}
+		if report is not None:
+			data['card'] = report.build_feishu_card(title)
 		self._post_json('Feishu', self.feishu_webhook, data)
 
 	def send_wecom(self, title: str, content: str):
@@ -157,13 +161,27 @@ class NotificationKit:
 
 		self._post_json('Bark', url, data)
 
-	def push_message(self, title: str, content: str, msg_type: Literal['text', 'html'] = 'text'):
+	def push_message(
+		self,
+		title: str,
+		content: str,
+		msg_type: Literal['text', 'html'] = 'text',
+		*,
+		feishu_report: CheckinReport | None = None,
+	):
 		notifications = [
 			('Email', lambda: self.send_email(title, content, msg_type)),
 			('PushPlus', lambda: self.send_pushplus(title, content)),
 			('Server Push', lambda: self.send_serverPush(title, content)),
 			('DingTalk', lambda: self.send_dingtalk(title, content)),
-			('Feishu', lambda: self.send_feishu(title, content)),
+			(
+				'Feishu',
+				lambda: (
+					self.send_feishu(title, content, feishu_report)
+					if feishu_report is not None
+					else self.send_feishu(title, content)
+				),
+			),
 			('WeChat Work', lambda: self.send_wecom(title, content)),
 			('Gotify', lambda: self.send_gotify(title, content)),
 			('Telegram', lambda: self.send_telegram(title, content)),

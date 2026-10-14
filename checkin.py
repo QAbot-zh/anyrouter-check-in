@@ -33,6 +33,7 @@ from utils.browser import (
 	verify_browser_login,
 	wait_for_waf_ready,
 )
+from utils.checkin_report import AccountCheckinResult, CheckinReport
 from utils.config import AccountConfig, AppConfig, load_accounts_config
 from utils.debug import debug_print, is_debug_enabled
 from utils.notify import notify
@@ -510,6 +511,7 @@ async def main():
 	notification_content = []
 	current_balances = {}
 	account_check_in_details = {}
+	feishu_report = CheckinReport(executed_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 	need_notify = False
 	balance_changed = False
 
@@ -517,6 +519,11 @@ async def main():
 		account_key = f'account_{i + 1}'
 		try:
 			success, user_info_before, user_info_after = await check_in_account(account, i, app_config)
+			feishu_report.accounts.append(
+				AccountCheckinResult.from_user_info(
+					account.get_display_name(i), account.provider, success, user_info_before, user_info_after
+				)
+			)
 			if success:
 				success_count += 1
 
@@ -570,6 +577,12 @@ async def main():
 
 		except Exception as e:
 			account_name = account.get_display_name(i)
+			# Replace an already collected row if processing this account failed later.
+			if len(feishu_report.accounts) > i and feishu_report.accounts[i].success:
+				success_count -= 1
+			feishu_report.accounts[i:] = [
+				AccountCheckinResult(account_name, account.provider, False, error=str(e)[:200])
+			]
 			print(f'[FAILED] {account_name} processing exception: {e}')
 			need_notify = True
 			notification_content.append(f'[FAIL] {account_name} exception: {str(e)[:50]}...')
@@ -600,7 +613,12 @@ async def main():
 	if current_balance_hash:
 		save_balance_hash(current_balance_hash)
 
-	if need_notify and notification_content:
+	if need_notify and (notification_content or feishu_report.accounts):
+		if not notification_content:
+			# First run with no before snapshot still needs to report the available balance.
+			for result in feishu_report.accounts:
+				balance = f'${result.balance:.2f}' if result.balance is not None else 'Unknown'
+				notification_content.append(f'[SUCCESS] {result.name}\nCurrent balance: {balance}')
 		summary = [
 			'[STATS] Check-in result statistics:',
 			f'[SUCCESS] Success: {success_count}/{total_count}',
@@ -628,9 +646,10 @@ async def main():
 			else:
 				screenshot_hint += ' to `checkin_screenshots/`'
 			notify_content += f'\n\n{screenshot_hint}'
+			feishu_report.screenshot_hint = screenshot_hint
 
 		print(notify_content)
-		notify.push_message('AnyRouter Check-in Alert', notify_content, msg_type='text')
+		notify.push_message('AnyRouter Check-in Alert', notify_content, msg_type='text', feishu_report=feishu_report)
 		print('[NOTIFY] Notification sent due to failures or balance changes')
 	else:
 		print('[INFO] All accounts successful and no balance changes detected, notification skipped')

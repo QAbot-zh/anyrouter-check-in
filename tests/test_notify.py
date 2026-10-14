@@ -11,6 +11,7 @@ import pytest
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from utils.checkin_report import AccountCheckinResult, CheckinReport
 from utils.notify import NotificationKit
 
 
@@ -95,6 +96,17 @@ def test_send_feishu(mock_httpx_client, notification_kit):
 	mock_client.post.assert_called_once()
 	args = mock_client.post.call_args[1]
 	assert 'card' in args['json']
+	assert args['json']['card']['elements'][0]['content'] == '测试内容'
+
+
+def test_send_feishu_report(mock_httpx_client, notification_kit):
+	mock_client, _ = mock_httpx_client
+	report = CheckinReport('2026-10-14 08:00:00', [AccountCheckinResult('主账号', 'anyrouter', True, 125, 25)])
+	notification_kit.send_feishu('AnyRouter Check-in Alert', 'original text', report)
+	mock_client.post.assert_called_once_with(
+		'https://open.feishu.cn/open-apis/bot/v2/hook/test_token',
+		json={'msg_type': 'interactive', 'card': report.build_feishu_card('AnyRouter Check-in Alert')},
+	)
 
 
 def test_send_wecom(mock_httpx_client, notification_kit):
